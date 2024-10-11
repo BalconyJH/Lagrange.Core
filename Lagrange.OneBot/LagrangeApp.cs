@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using Lagrange.Core;
@@ -50,6 +51,35 @@ public class LagrangeApp : IHost
         OperationService = Services.GetRequiredService<OperationService>();
 
         _isFirstLogin = true;
+        // Initialize Sentry
+        try
+        {
+            // Check if DSN is provided
+            var dsn = Configuration["Sentry:Dsn"];
+            if (string.IsNullOrEmpty(dsn))
+            {
+                Logger.LogWarning("Sentry DSN is not set, Sentry is disabled");
+                return;
+            }
+
+            SentrySdk.Init(options =>
+            {
+                options.Dsn = dsn;
+                options.Debug = Configuration.GetValue<bool>("Sentry:Debug");
+                options.AutoSessionTracking = true;
+                options.TracesSampleRate = Configuration.GetValue<double>("Sentry:TracesSampleRate");
+                var proxy = Configuration["DsnProxy"];
+                if (!string.IsNullOrWhiteSpace(proxy))
+                {
+                    options.HttpProxy = new WebProxy(proxy);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            SentrySdk.CaptureException(ex);
+            Logger.LogError(ex, "An error occurred while initializing Sentry");
+        }
     }
 
     public async Task StartAsync(CancellationToken cancellationToken = new())

@@ -23,11 +23,18 @@ internal class LogContext : ContextBase
     public void LogInfo(string tag, string message) =>
         _invoker.PostEvent(new BotLogEvent(tag, LogLevel.Information, message));
     
-    public void LogWarning(string tag, string message) =>
+    public void LogWarning(string tag, string message)
+    {
         _invoker.PostEvent(new BotLogEvent(tag, LogLevel.Warning, message));
+        SentrySdk.CaptureMessage(message, SentryLevel.Warning);
+    }
     
-    public void LogFatal(string tag, string message) =>
-        _invoker.PostEvent(new BotLogEvent(tag, LogLevel.Fatal, message));
+    public void LogFatal(string tag, string message)
+    {
+        var logEvent = new BotLogEvent(tag, LogLevel.Fatal, message);
+        _invoker.PostEvent(logEvent);
+        SentrySdk.CaptureException(new Exception(message));
+    }
     
     public void Log(string tag, LogLevel level, string message) =>
         _invoker.PostEvent(new BotLogEvent(tag, level, message));
