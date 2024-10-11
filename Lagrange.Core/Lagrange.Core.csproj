@@ -22,6 +22,7 @@
     <ItemGroup>
         <None Include="../README.md" Pack="true" PackagePath="\" />
         <PackageReference Include="protobuf-net" Version="3.2.16" />
+        <PackageReference Include="Sentry.Profiling" Version="4.10.2" />
     </ItemGroup>
 
 </Project>
