@@ -102,7 +102,7 @@ public sealed class MessageBuilder
     /// </summary>
     /// <param name="id">The id of emoji</param>
     /// <param name="isLarge">Is the emoji large</param>
-    public MessageBuilder Face(ushort id, bool isLarge = false)
+    public MessageBuilder Face(ushort id, bool? isLarge = false)
     {
         var faceEntity = new FaceEntity(id, isLarge);
         _chain.Add(faceEntity);
@@ -353,11 +353,17 @@ public sealed class MessageBuilder
         return this;
     }
 
+    [Obsolete("This is an embarrassing typo... sorry; see also: GreyTip")]
     public MessageBuilder GeryTip(string greyTip)
+    {
+        return GreyTip(greyTip);
+    }
+
+    public MessageBuilder GreyTip(string greyTip)
     {
         var greyTipEntity = new GreyTipEntity(greyTip);
         _chain.Add(greyTipEntity);
-        
+
         return this;
     }
 
