@@ -24,6 +24,7 @@ namespace Lagrange.OneBot;
 public class LagrangeApp : IHost
 {
     private readonly IHost _hostApp;
+    private bool _isSentryInitialized;
 
     public IServiceProvider Services => _hostApp.Services;
 
@@ -51,56 +52,98 @@ public class LagrangeApp : IHost
         OperationService = Services.GetRequiredService<OperationService>();
 
         _isFirstLogin = true;
-        // Initialize Sentry
+        InitializeSentry();
+    }
+    
+    private void InitializeSentry()
+    {
+        if (_isSentryInitialized)
+        {
+            Logger.LogWarning("Sentry has already been initialized");
+            return;
+        }
+
         try
         {
-            // Check if DSN is provided
             var dsn = Configuration["Sentry:Dsn"];
             if (string.IsNullOrEmpty(dsn))
             {
-                Logger.LogWarning("Sentry DSN is not set, Sentry is disabled");
+                Logger.LogInformation("Sentry DSN is not set, Sentry is disabled");
                 return;
             }
 
-            SentrySdk.Init(options =>
+            var options = new SentryOptions
             {
-                options.Dsn = dsn;
-                options.Debug = Configuration.GetValue<bool>("Sentry:Debug");
-                options.AutoSessionTracking = true;
-                options.TracesSampleRate = Configuration.GetValue<double>("Sentry:TracesSampleRate");
-                var proxy = Configuration["DsnProxy"];
-                if (!string.IsNullOrWhiteSpace(proxy))
-                {
-                    options.HttpProxy = new WebProxy(proxy);
-                }
+                Dsn = dsn,
+                Debug = Configuration.GetValue("Sentry:Debug", false),
+                AutoSessionTracking = true,
+                TracesSampleRate = Configuration.GetValue("Sentry:TracesSampleRate", 1.0),
+                Environment = Configuration["Environment"] ?? "production",
+                Release = typeof(LagrangeApp).Assembly.GetName().Version?.ToString(),
+                MaxBreadcrumbs = Configuration.GetValue("Sentry:MaxBreadcrumbs", 100),
+                SampleRate = Configuration.GetValue("Sentry:SampleRate", 1.0f),
+                AttachStacktrace = true,
+            };
+            
+            options.SetBeforeSend((sentryEvent, _) =>
+            {
+                sentryEvent.SetExtra("botUin", Instance.BotUin);
+                sentryEvent.SetExtra("protocolVersion", Instance.ContextCollection.AppInfo.CurrentVersion);
+                return sentryEvent;
             });
+
+            ConfigureProxy(options);
+            
+            SentrySdk.Init(options);
+            _isSentryInitialized = true;
+            Logger.LogInformation("Sentry initialized successfully");
         }
         catch (Exception ex)
         {
-            SentrySdk.CaptureException(ex);
-            Logger.LogError(ex, "An error occurred while initializing Sentry");
+            Logger.LogError(ex, "Failed to initialize Sentry");
         }
     }
+
+    private void ConfigureProxy(SentryOptions options)
+    {
+        var proxyAddress = Configuration["DsnProxy"];
+        if (string.IsNullOrWhiteSpace(proxyAddress)) return;
+
+        var proxy = new WebProxy(proxyAddress);
+        var proxyUsername = Configuration["DsnProxy:Username"];
+        var proxyPassword = Configuration["DsnProxy:Password"];
+
+        if (!string.IsNullOrEmpty(proxyUsername) && !string.IsNullOrEmpty(proxyPassword))
+        {
+            proxy.Credentials = new NetworkCredential(proxyUsername, proxyPassword);
+        }
+
+        options.HttpProxy = proxy;
+    }
+
 
     public async Task StartAsync(CancellationToken cancellationToken = new())
     {
         await _hostApp.StartAsync(cancellationToken);
         Logger.LogInformation("Lagrange.OneBot Implementation has started");
-        Logger.LogInformation($"Protocol: {Configuration["Protocol"]} | {Instance.ContextCollection.AppInfo.CurrentVersion}");
+        Logger.LogInformation(
+            $"Protocol: {Configuration["Protocol"]} | {Instance.ContextCollection.AppInfo.CurrentVersion}");
 
         Instance.ContextCollection.Packet.SignProvider = Services.GetRequiredService<SignProvider>();
         if (!string.IsNullOrEmpty(Configuration["Account:Password"]))
-            Instance.ContextCollection.Keystore.PasswordMd5 = await Encoding.UTF8.GetBytes(Configuration["Account:Password"] ?? "").Md5Async();
+            Instance.ContextCollection.Keystore.PasswordMd5 =
+                await Encoding.UTF8.GetBytes(Configuration["Account:Password"] ?? "").Md5Async();
 
-        Instance.Invoker.OnBotLogEvent += (_, args) => Services.GetRequiredService<ILogger<BotContext>>().Log(args.Level switch
-        {
-            LogLevel.Debug => Microsoft.Extensions.Logging.LogLevel.Trace,
-            LogLevel.Verbose => Microsoft.Extensions.Logging.LogLevel.Information,
-            LogLevel.Information => Microsoft.Extensions.Logging.LogLevel.Information,
-            LogLevel.Warning => Microsoft.Extensions.Logging.LogLevel.Warning,
-            LogLevel.Fatal => Microsoft.Extensions.Logging.LogLevel.Error,
-            _ => Microsoft.Extensions.Logging.LogLevel.Error
-        }, args.ToString());
+        Instance.Invoker.OnBotLogEvent += (_, args) => Services.GetRequiredService<ILogger<BotContext>>().Log(
+            args.Level switch
+            {
+                LogLevel.Debug => Microsoft.Extensions.Logging.LogLevel.Trace,
+                LogLevel.Verbose => Microsoft.Extensions.Logging.LogLevel.Information,
+                LogLevel.Information => Microsoft.Extensions.Logging.LogLevel.Information,
+                LogLevel.Warning => Microsoft.Extensions.Logging.LogLevel.Warning,
+                LogLevel.Fatal => Microsoft.Extensions.Logging.LogLevel.Error,
+                _ => Microsoft.Extensions.Logging.LogLevel.Error
+            }, args.ToString());
 
         Instance.Invoker.OnBotOnlineEvent += async (_, args) =>
         {
@@ -114,13 +157,15 @@ public class LagrangeApp : IHost
             await WebService.StartAsync(cancellationToken);
             Services.GetRequiredService<NotifyService>().RegisterEvents();
 
-            await File.WriteAllTextAsync(Configuration["ConfigPath:Keystore"] ?? "keystore.json", json, cancellationToken);
+            await File.WriteAllTextAsync(Configuration["ConfigPath:Keystore"] ?? "keystore.json", json,
+                cancellationToken);
 
             _isFirstLogin = false;
         };
 
         if (string.IsNullOrEmpty(Configuration["Account:Password"]) &&
-            Instance.ContextCollection.Keystore.Session.TempPassword == null) // EasyLogin and PasswordLogin is both disabled
+            Instance.ContextCollection.Keystore.Session.TempPassword ==
+            null) // EasyLogin and PasswordLogin is both disabled
         {
             Logger.LogInformation("Session expired or Password not filled in, try to login by QrCode");
 
@@ -128,7 +173,8 @@ public class LagrangeApp : IHost
             {
                 QrCodeHelper.Output(qrCode.Url ?? "", Configuration.GetValue<bool>("QrCode:ConsoleCompatibilityMode"));
                 Logger.LogInformation($"Please scan the QR code above, Url: {qrCode.Url}");
-                await File.WriteAllBytesAsync($"qr-{Instance.BotUin}.png", qrCode.QrCode ?? Array.Empty<byte>(), cancellationToken);
+                await File.WriteAllBytesAsync($"qr-{Instance.BotUin}.png", qrCode.QrCode ?? Array.Empty<byte>(),
+                    cancellationToken);
 
                 await Instance.LoginByQrCode(cancellationToken);
             }
