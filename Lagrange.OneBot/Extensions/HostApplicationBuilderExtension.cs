@@ -1,3 +1,5 @@
+using System.Net;
+using System.Reflection;
 using Lagrange.Core.Common;
 using Lagrange.Core.Common.Interface;
 using Lagrange.OneBot.Core.Login;
@@ -13,7 +15,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-
 using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace Lagrange.OneBot.Extensions;
@@ -24,6 +25,14 @@ public static class HostApplicationBuilderExtension
     {
         builder.Services
             .AddSingleton<OneBotSigner>() // Signer
+            .AddHostedService<SentryMonitoringService>() // Sentry Service
+            .AddSingleton<Lagrange.Core.Common.Sentry>(sp => 
+            {
+                var sentryService = sp.GetServices<IHostedService>()
+                    .OfType<SentryMonitoringService>()
+                    .First();
+                return sentryService.GetConfig();
+            })
             .AddSingleton((services) => // BotConfig
             {
                 var configuration = services.GetRequiredService<IConfiguration>();
@@ -100,10 +109,7 @@ public static class HostApplicationBuilderExtension
                 bool isFirstCreate = false;
                 if (!File.Exists(path)) isFirstCreate = true;
 
-                var db = new LiteDatabase(path)
-                {
-                    CheckpointSize = 50
-                };
+                var db = new LiteDatabase(path) { CheckpointSize = 50 };
 
                 string[] expressions = ["$.Sequence", "$.MessageId", "$.FriendUin", "$.GroupUin"];
 
@@ -131,31 +137,28 @@ public static class HostApplicationBuilderExtension
                 if (!isFirstCreate && hasFirstIndex)
                 {
                     db.Dispose(); // Ensure that the database is written correctly
-                    logger.LogInformation("Indexing Complete! Press any key to close and restart the program manually!");
+                    logger.LogInformation(
+                        "Indexing Complete! Press any key to close and restart the program manually!");
                     Console.ReadKey(true);
                     Environment.Exit(0);
                 }
+
                 return db;
             })
 
             // // OneBot Netword Service
             .AddSingleton<LagrangeWebSvcCollection>()
-
             .AddScoped<ILagrangeWebServiceFactory<ForwardWSService>, ForwardWSServiceFactory>()
             .AddScoped<ForwardWSService>()
-
             .AddScoped<ILagrangeWebServiceFactory<ReverseWSService>, ReverseWSServiceFactory>()
             .AddScoped<ReverseWSService>()
-
             .AddScoped<ILagrangeWebServiceFactory<HttpService>, HttpServiceFactory>()
             .AddScoped<HttpService>()
-
             .AddScoped<ILagrangeWebServiceFactory<HttpPostService>, HttpPostServiceFactory>()
             .AddScoped<HttpPostService>()
-
             .AddScoped<ILagrangeWebServiceFactory, DefaultLagrangeWebServiceFactory>()
             .AddScoped(services => services.GetRequiredService<ILagrangeWebServiceFactory>().Create()
-                ?? throw new Exception("Invalid conf detected"))
+                                   ?? throw new Exception("Invalid conf detected"))
 
             // // OneBot Misc Service
             .AddSingleton<MusicSigner>()

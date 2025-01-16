@@ -11,4 +11,8 @@
       <ProjectReference Include="..\Lagrange.Core\Lagrange.Core.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+      <PackageReference Include="Sentry" Version="5.0.1" />
+    </ItemGroup>
+
 </Project>

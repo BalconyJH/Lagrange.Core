@@ -11,24 +11,104 @@ internal class LogContext : ContextBase
 {
     private readonly EventInvoker _invoker;
 
-    public LogContext(ContextCollection collection, BotKeystore keystore, BotAppInfo appInfo, BotDeviceInfo device, EventInvoker invoker)
+    public LogContext(ContextCollection collection, BotKeystore keystore, BotAppInfo appInfo, BotDeviceInfo device,
+        EventInvoker invoker)
         : base(collection, keystore, appInfo, device) => _invoker = invoker;
-    
-    public void LogDebug(string tag, string message) =>
+
+    public void LogDebug(string tag, string message)
+    {
         _invoker.PostEvent(new BotLogEvent(tag, LogLevel.Debug, message));
-    
-    public void LogVerbose(string tag, string message) => 
+        SentrySdk.AddBreadcrumb(
+            message: message,
+            category: tag,
+            level: BreadcrumbLevel.Debug
+        );
+    }
+
+    public void LogVerbose(string tag, string message)
+    {
         _invoker.PostEvent(new BotLogEvent(tag, LogLevel.Verbose, message));
-    
-    public void LogInfo(string tag, string message) =>
+        SentrySdk.AddBreadcrumb(
+            message: message,
+            category: tag,
+            level: BreadcrumbLevel.Info
+        );
+    }
+
+    public void LogInfo(string tag, string message)
+    {
         _invoker.PostEvent(new BotLogEvent(tag, LogLevel.Information, message));
-    
-    public void LogWarning(string tag, string message) =>
+        SentrySdk.AddBreadcrumb(
+            message: message,
+            category: tag,
+            level: BreadcrumbLevel.Info
+        );
+    }
+
+    public void LogWarning(string tag, string message)
+    {
         _invoker.PostEvent(new BotLogEvent(tag, LogLevel.Warning, message));
-    
-    public void LogFatal(string tag, string message) =>
-        _invoker.PostEvent(new BotLogEvent(tag, LogLevel.Fatal, message));
-    
-    public void Log(string tag, LogLevel level, string message) =>
+        SentrySdk.AddBreadcrumb(
+            message: message,
+            category: tag,
+            level: BreadcrumbLevel.Warning
+        );
+        SentrySdk.CaptureMessage(
+            message: $"[{tag}] {message}",
+            level: SentryLevel.Warning
+        );
+    }
+
+    public void LogFatal(string tag, string message)
+    {
+        var logEvent = new BotLogEvent(tag, LogLevel.Fatal, message);
+        _invoker.PostEvent(logEvent);
+
+        var exception = new Exception($"[{tag}] {message}");
+
+        var sentryEvent = new SentryEvent(exception) { Level = SentryLevel.Fatal, };
+
+        sentryEvent.SetTag("tag", tag);
+
+        SentrySdk.CaptureEvent(sentryEvent);
+    }
+
+    public void Log(string tag, LogLevel level, string message)
+    {
         _invoker.PostEvent(new BotLogEvent(tag, level, message));
+
+        var sentryLevel = level switch
+        {
+            LogLevel.Debug => SentryLevel.Debug,
+            LogLevel.Verbose => SentryLevel.Debug,
+            LogLevel.Information => SentryLevel.Info,
+            LogLevel.Warning => SentryLevel.Warning,
+            LogLevel.Fatal => SentryLevel.Fatal,
+            _ => SentryLevel.Info
+        };
+
+        SentrySdk.AddBreadcrumb(
+            message: message,
+            category: tag,
+            level: ConvertToBreakcrumbLevel(level)
+        );
+
+        if (level >= LogLevel.Warning)
+        {
+            SentrySdk.CaptureMessage(
+                message: $"[{tag}] {message}",
+                level: sentryLevel
+            );
+        }
+    }
+
+    private static BreadcrumbLevel ConvertToBreakcrumbLevel(LogLevel level) => level switch
+    {
+        LogLevel.Debug => BreadcrumbLevel.Debug,
+        LogLevel.Verbose => BreadcrumbLevel.Info,
+        LogLevel.Information => BreadcrumbLevel.Info,
+        LogLevel.Warning => BreadcrumbLevel.Warning,
+        LogLevel.Fatal => BreadcrumbLevel.Critical,
+        _ => BreadcrumbLevel.Info
+    };
 }
